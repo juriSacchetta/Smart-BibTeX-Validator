@@ -511,11 +511,12 @@ class SmartBibtexValidator:
         if corrected_fields.get("year"):
             resolved.add("BLOCKING:MISSING_FIELD:year")
         
-        if corrected_fields.get("venue"):
-            if entry_type == "article":
-                resolved.add("BLOCKING:MISSING_FIELD:journal")
-            else:
-                resolved.add("BLOCKING:MISSING_FIELD:booktitle")
+        # Venue can come as venue OR explicit journal/booktitle
+        if corrected_fields.get("journal") or corrected_fields.get("venue"):
+            resolved.add("BLOCKING:MISSING_FIELD:journal")
+        
+        if corrected_fields.get("booktitle") or corrected_fields.get("venue"):
+            resolved.add("BLOCKING:MISSING_FIELD:booktitle")
         
         return resolved
 
@@ -614,8 +615,9 @@ class SmartBibtexValidator:
             issues.append(f"YEAR: {orig_year} vs {corr_year}")
 
         # Compare venue (fuzzy, using rapidfuzz)
+        # Check both original and corrected for venue-like fields
         orig_venue = original.get("booktitle") or original.get("journal") or ""
-        corr_venue = corrected.get("venue", "")
+        corr_venue = corrected.get("booktitle") or corrected.get("journal") or corrected.get("venue") or ""
         if orig_venue and corr_venue:
             similarity = token_set_ratio(orig_venue.lower(), corr_venue.lower()) / 100.0
             if similarity < 0.60:
@@ -629,12 +631,12 @@ class SmartBibtexValidator:
         
         Strategy:
         - For DOI-based matches (match_kind == "doi"): 
-          - Always overwrite DOI/year (authoritative)
+          - Full authoritative replacement: overwrite entire entry except ID
         - For title-based matches (match_kind == "title"):
-          - If match_confidence >= TITLE_SIMILARITY_THRESHOLD: overwrite DOI/year/title
-          - Otherwise: only fill missing fields (non-destructive)
-        - Author, venue: always only fill if missing (never overwrite)
-        - Year/DOI: fill always if missing (low risk)
+          - If match_confidence >= TITLE_SIMILARITY_THRESHOLD: full replacement (trusted)
+          - Otherwise: only fill missing fields (non-destructive, conservative)
+        - Never overwrite: ID (BibTeX citation key)
+        - Always preserve or set ENTRYTYPE (required by bibtexparser)
         
         Args:
             mode: "preferred" (apply all validated/mismatch corrections, with trust guards)
@@ -669,7 +671,7 @@ class SmartBibtexValidator:
             if validation_result and "corrected_fields" in validation_result:
                 corrected = validation_result["corrected_fields"]
                 
-                # Determine if match is trusted (for destructive overwrites)
+                # Determine if match is trusted (for full replacement)
                 match_kind = validation_result.get("match_kind")
                 match_confidence = validation_result.get("match_confidence")
                 trusted_match = (match_kind == "doi") or (
@@ -677,83 +679,46 @@ class SmartBibtexValidator:
                 )
                 
                 autofilled = []
-                
-                for field, value in corrected.items():
-                    if not value:
-                        continue
-                    
-                    # Map 'venue' to appropriate BibTeX field
-                    if field == "venue":
-                        if entry.get("ENTRYTYPE") == "article":
-                            target_field = "journal"
+
+                if trusted_match:
+                    # Full authoritative replacement: keep only local citation key
+                    old_id = entry_copy.get("ID")
+                    old_type = entry_copy.get("ENTRYTYPE")  # Fallback if remote doesn't provide it
+                    entry_copy = {"ID": old_id}
+
+                    # Copy all remote fields verbatim
+                    for field, value in corrected.items():
+                        if not value:
+                            continue
+                        if field == "ID":
+                            continue
+                        entry_copy[field] = value
+                        autofilled.append(f"{field} (trusted replace)")
+
+                    # Guarantee ENTRYTYPE exists for bibtexparser
+                    if "ENTRYTYPE" not in entry_copy or not entry_copy["ENTRYTYPE"]:
+                        if old_type:
+                            entry_copy["ENTRYTYPE"] = old_type
+                            autofilled.append("ENTRYTYPE (fallback from local)")
                         else:
-                            target_field = "booktitle"
-                        
-                        # Only fill if missing (never overwrite)
-                        if not entry_copy.get(target_field):
-                            entry_copy[target_field] = value
-                            autofilled.append(f"{target_field} (from venue)")
-                    
-                    # DOI: 
-                    # - If entry has no DOI: always fill (safe, low risk)
-                    # - If entry has DOI: only overwrite if trusted_match
-                    elif field == "doi":
-                        normalized = normalize_doi(value)
-                        if normalized:
-                            orig_doi = entry.get("doi")
-                            if not orig_doi:
-                                # Field missing: safe to fill
-                                entry_copy["doi"] = normalized
-                                autofilled.append("doi (was missing)")
-                            elif trusted_match and orig_doi != normalized:
-                                # Field present but trusted match disagrees: overwrite
-                                entry_copy["doi"] = normalized
-                                autofilled.append("doi (trusted match)")
-                    
-                    # Year:
-                    # - If entry has no year: always fill (safe, low risk)
-                    # - If entry has year: only overwrite if trusted_match
-                    elif field == "year":
-                        orig_year = entry.get("year")
-                        if not orig_year:
-                            # Field missing: safe to fill
-                            entry_copy["year"] = value
-                            autofilled.append("year (was missing)")
-                        elif trusted_match and orig_year != value:
-                            # Field present but trusted match disagrees: overwrite
-                            entry_copy["year"] = value
-                            autofilled.append("year (trusted match)")
-                    
-                    # Title: 
-                    # - If missing: always fill (safe, completes entry)
-                    # - If present: only overwrite if trusted_match
-                    elif field == "title":
-                        orig_title = entry.get("title")
-                        if not orig_title:
-                            # Field missing: safe to fill
-                            entry_copy["title"] = value
-                            autofilled.append("title (was missing)")
-                        elif trusted_match and orig_title != value:
-                            # Field present but trusted match disagrees: overwrite
-                            entry_copy["title"] = value
-                            autofilled.append("title (trusted match)")
-                    
-                    # Author, journal, booktitle: only fill if missing (never overwrite)
-                    elif field in ("author", "journal", "booktitle"):
+                            entry_copy["ENTRYTYPE"] = "misc"
+                            autofilled.append("ENTRYTYPE (default misc)")
+
+                else:
+                    # Non-trusted match: keep current conservative behaviour (fill missing only)
+                    for field, value in corrected.items():
+                        if not value:
+                            continue
+                        if field == "ID":
+                            continue
                         if not entry_copy.get(field):
                             entry_copy[field] = value
-                            autofilled.append(field)
-                    
-                    else:
-                        # Generic other fields: only fill if missing
-                        if not entry_copy.get(field):
-                            entry_copy[field] = value
-                            autofilled.append(field)
-                
+                            autofilled.append(f"{field} (was missing)")
+
                 # Add x-found-in field with provenance
                 if validation_result.get("search_method"):
                     entry_copy["x-found-in"] = validation_result["search_method"]
-                
+
                 # Record autofilled fields for reporting
                 validation_result["autofilled_fields"] = autofilled
 

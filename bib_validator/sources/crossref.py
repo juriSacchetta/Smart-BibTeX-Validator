@@ -13,6 +13,17 @@ CROSSREF_API_URL = "https://api.crossref.org/works"
 CROSSREF_REQUEST_TIMEOUT = 8.0
 CROSSREF_USER_AGENT = "bib-validator/1.0 (https://github.com/you/bib-validator; mailto:maintainer@example.com)"
 
+CROSSREF_TYPE_TO_BIBTEX = {
+    "proceedings-article": "inproceedings",
+    "proceedings": "proceedings",
+    "journal-article": "article",
+    "book-chapter": "incollection",
+    "book": "book",
+    "report": "techreport",
+    "dissertation": "phdthesis",
+    "posted-content": "misc",
+}
+
 
 class CrossrefSource(ValidationSource):
     """Crossref validation source using REST API"""
@@ -93,6 +104,12 @@ class CrossrefSource(ValidationSource):
         """Extract BibTeX fields from Crossref API result"""
         fields = {}
 
+        # Infer BibTeX entry type from Crossref "type"
+        cr_type = (result.get("type") or "").strip().lower()
+        bibtex_type = CROSSREF_TYPE_TO_BIBTEX.get(cr_type)
+        if bibtex_type:
+            fields["ENTRYTYPE"] = bibtex_type
+
         if result.get("title"):
             titles = result["title"]
             if isinstance(titles, list) and titles:
@@ -116,18 +133,58 @@ class CrossrefSource(ValidationSource):
         if result.get("issued"):
             date_parts = result["issued"].get("date-parts")
             if date_parts and date_parts[0]:
-                fields["year"] = str(date_parts[0][0])
+                parts = date_parts[0]
+                if len(parts) >= 1:
+                    fields["year"] = str(parts[0])
+                if len(parts) >= 2:
+                    month_map = {
+                        1: "jan", 2: "feb", 3: "mar", 4: "apr", 5: "may", 6: "jun",
+                        7: "jul", 8: "aug", 9: "sep", 10: "oct", 11: "nov", 12: "dec",
+                    }
+                    m = month_map.get(int(parts[1]))
+                    if m:
+                        fields["month"] = m
 
-        # Map container-title to venue (booktitle/journal context-dependent)
-        if result.get("container-title"):
-            container = result["container-title"]
-            if isinstance(container, list) and container:
-                fields["venue"] = container[0]
-            elif isinstance(container, str):
-                fields["venue"] = container
-
+        # URL: prefer DOI resolver URL when DOI exists
         if result.get("DOI"):
             fields["doi"] = result["DOI"]
+            fields["url"] = f"https://doi.org/{result['DOI']}"
+        elif result.get("URL"):
+            fields["url"] = result["URL"]
+
+        # Publisher
+        if result.get("publisher"):
+            fields["publisher"] = result["publisher"]
+
+        # Pages
+        if result.get("page"):
+            fields["pages"] = str(result["page"])
+
+        # Volume
+        if result.get("volume"):
+            fields["volume"] = str(result["volume"])
+
+        # Issue/Number
+        if result.get("issue"):
+            fields["number"] = str(result["issue"])
+
+        # Map container-title appropriately based on entry type
+        container_title = None
+        ct = result.get("container-title")
+        if isinstance(ct, list) and ct:
+            container_title = ct[0]
+        elif isinstance(ct, str):
+            container_title = ct
+
+        if container_title:
+            # Proceedings items should populate booktitle; journal items should populate journal
+            if bibtex_type in ("inproceedings", "incollection", "proceedings"):
+                fields["booktitle"] = container_title
+            elif bibtex_type == "article":
+                fields["journal"] = container_title
+            else:
+                # Fallback for unknown types
+                fields["booktitle"] = container_title
 
         return fields
 

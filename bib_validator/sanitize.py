@@ -3,6 +3,7 @@
 import re
 from typing import Dict
 from .normalize import normalize_doi, normalize_year
+from .url_check import is_doi_url
 
 
 def latex_encode(s: str) -> str:
@@ -38,6 +39,7 @@ def sanitize_entry(entry: Dict) -> Dict:
       - Ensure year is 4 digits if present
       - Strip trailing/leading whitespace from all fields
       - Skip LaTeX encoding for URL, DOI, ID, ENTRYTYPE (preserve raw values)
+      - Drop DOI resolver URLs when a DOI field exists (avoid redundancy)
     
     Args:
         entry: BibTeX entry dict
@@ -79,6 +81,14 @@ def sanitize_entry(entry: Dict) -> Dict:
             value = latex_encode(value)
         
         sanitized[key] = value
+    
+    # If we have a DOI, don't keep a redundant DOI resolver URL in `url`.
+    # Keep `url` only if it's not a DOI URL (i.e., some landing page / PDF / arXiv / etc.).
+    doi_val = (sanitized.get("doi") or "").strip()
+    url_val = (sanitized.get("url") or "").strip()
+    
+    if doi_val and url_val and is_doi_url(url_val):
+        sanitized.pop("url", None)
     
     return sanitized
 

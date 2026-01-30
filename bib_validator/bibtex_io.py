@@ -16,7 +16,28 @@ def load_bibtex_entries(path: str) -> List[Dict]:
 
 
 def write_bibtex_entries(path: str, entries: List[Dict]) -> None:
-    """Write entries to a BibTeX file"""
+    """
+    Write entries to a BibTeX file.
+    
+    Validates that all entries have required ID and ENTRYTYPE fields before writing.
+    Raises ValueError if any entry is missing these fields.
+    
+    Args:
+        path: Output file path
+        entries: List of BibTeX entry dicts
+    
+    Raises:
+        ValueError: If any entry is missing ID or ENTRYTYPE
+    """
+    # Defensive validation: ensure all entries have required keys
+    for i, entry in enumerate(entries):
+        if "ID" not in entry or "ENTRYTYPE" not in entry:
+            raise ValueError(
+                f"Cannot write entry at index {i}: missing required keys. "
+                f"ID present: {'ID' in entry}, ENTRYTYPE present: {'ENTRYTYPE' in entry}. "
+                f"Entry keys: {sorted(entry.keys())}"
+            )
+    
     db = bibtexparser.bibdatabase.BibDatabase()
     db.entries = entries
     

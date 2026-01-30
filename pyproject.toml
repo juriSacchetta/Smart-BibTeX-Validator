@@ -10,11 +10,11 @@ readme = "README.md"
 requires-python = ">=3.8"
 authors = [{ name = "Juri Sacchetta" }]
 keywords = ["bibtex", "validation", "crossref", "dblp", "semantic-scholar"]
+license = { text = "MIT" }
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
   "Natural Language :: English",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -30,3 +30,6 @@ dependencies = [
   "latexcodec==3.0.0",
   "rapidfuzz==3.6.1",
 ]
+
+[project.scripts]
+bib-validator = "bib_validator.cli:main"
