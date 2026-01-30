@@ -11,19 +11,22 @@ requires-python = ">=3.8"
 authors = [{ name = "Juri Sacchetta" }]
 keywords = ["bibtex", "validation", "crossref", "dblp", "semantic-scholar"]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Environment :: Console",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Natural Language :: English",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Topic :: Text Processing :: Markup",
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Natural Language :: English",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Text Processing :: Markup",
 ]
 dependencies = [
-    "bibtexparser==1.4.1",
-    "requests==2.31
+  "bibtexparser==1.4.1",
+  "requests==2.31.0",
+  "latexcodec==3.0.0",
+  "rapidfuzz==3.6.1",
+]
