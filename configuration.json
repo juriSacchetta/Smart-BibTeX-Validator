@@ -1,0 +1,38 @@
+{
+  "validation": {
+    "sources": ["dblp", "scholar", "semantic"],
+    "rate_limit_delay": 2,
+    "source_switch_delay": 1
+  },
+  "filtering": {
+    "skip_patterns": [
+      "github.com",
+      "github issue",
+      "pull request",
+      "documentation",
+      "readme",
+      "security policy",
+      "vulnerability disclosure",
+      "nasa.gov",
+      "esa.int",
+      "manual",
+      "guide",
+      "tutorial",
+      "blog",
+      "website",
+      "webpage"
+    ],
+    "skip_types_without_doi": [],
+    "keep_arxiv": true
+  },
+  "comparison": {
+    "author_similarity_threshold": 0.75,
+    "venue_similarity_threshold": 0.6,
+    "title_similarity_threshold": 0.85,
+    "max_author_mismatches_to_report": 3
+  },
+  "output": {
+    "updated_bibtex_file": "bibliography_updated.bib",
+    "report_file": "validation_report.txt"
+  }
+}
