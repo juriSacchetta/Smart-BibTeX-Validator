@@ -1,5 +1,4 @@
 bibtexparser==1.4.1
 requests==2.31.0
-scholarly==1.7.11
-semanticscholar==0.8.4
-free-proxy==1.1.1
+latexcodec==3.0.0
+rapidfuzz==3.6.1

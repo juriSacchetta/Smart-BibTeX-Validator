@@ -2,11 +2,11 @@
 
 from typing import Dict, List
 from .base import ValidationSource
+from .crossref import CrossrefSource
 from .dblp import DBLPSource
-from .scholar import ScholarSource
 from .semantic import SemanticScholarSource
 
-DEFAULT_ORDER = ["dblp", "scholar", "semantic"]
+DEFAULT_ORDER = ["crossref", "dblp", "semantic"]
 
 
 def build_sources(selected: List[str]) -> Dict[str, ValidationSource]:
@@ -17,10 +17,10 @@ def build_sources(selected: List[str]) -> Dict[str, ValidationSource]:
         if source_name not in selected:
             continue
         
-        if source_name == "dblp":
+        if source_name == "crossref":
+            sources["crossref"] = CrossrefSource()
+        elif source_name == "dblp":
             sources["dblp"] = DBLPSource()
-        elif source_name == "scholar":
-            sources["scholar"] = ScholarSource()
         elif source_name == "semantic":
             sources["semantic"] = SemanticScholarSource()
     

@@ -1,9 +1,14 @@
 """DBLP validation source"""
 
+import logging
 import requests
 import time
 from typing import Dict, Optional, Tuple
 from .base import ValidationSource
+from ..lint import is_web_resource
+
+
+logger = logging.getLogger(__name__)
 
 
 class DBLPSource(ValidationSource):
@@ -11,11 +16,24 @@ class DBLPSource(ValidationSource):
     
     name = "dblp"
 
+    def __init__(self):
+        """Initialize with session for connection reuse"""
+        self.session = requests.Session()
+
     def should_attempt(self, entry: Dict) -> Tuple[bool, str]:
         """DBLP-specific skip policy"""
         entry_type = entry.get("ENTRYTYPE", "").lower()
         title = (entry.get("title") or "").lower()
 
+        # Skip web resources entirely (handled separately by validator)
+        if is_web_resource(entry):
+            return False, "web resource (handled separately)"
+
+        # Skip online/misc/manual without DOI
+        if entry_type in ("online", "misc", "manual") and not entry.get("doi"):
+            return False, f"{entry_type} without DOI"
+
+        # Skip based on title patterns (GitHub, blogs, docs, etc.)
         skip_patterns = [
             "github.com",
             "github issue",
@@ -38,12 +56,6 @@ class DBLPSource(ValidationSource):
             if pattern in title:
                 return False, f"title contains '{pattern}'"
 
-        if entry_type == "online" and not entry.get("doi"):
-            return False, "online entry without DOI"
-
-        if entry_type in ["techreport", "misc", "manual"] and not entry.get("doi"):
-            return False, f"{entry_type} without DOI"
-
         return True, "ok"
 
     def search_by_doi(self, doi: str) -> Optional[Dict]:
@@ -56,19 +68,19 @@ class DBLPSource(ValidationSource):
         params = {"q": title, "format": "json", "h": 1}
         return self._search(params)
 
-    def _search(self, params: Dict, max_retries: int = 3) -> Optional[Dict]:
+    def _search(self, params: Dict, max_retries: int = 2) -> Optional[Dict]:
         """Search DBLP with exponential backoff retry"""
         url = "https://dblp.org/search/publ/api"
-        retry_delay = 3
+        retry_delay = 2
 
         for attempt in range(max_retries):
             try:
-                response = requests.get(url, params=params, timeout=15)
+                response = self.session.get(url, params=params, timeout=10)
 
                 if response.status_code == 429:
                     if attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** attempt)
-                        print(f"  ⏳ Rate limited. Waiting {wait_time}s...")
+                        logger.debug("DBLP rate limited (429). Waiting %.1fs params=%s", wait_time, params)
                         time.sleep(wait_time)
                         continue
                     return None
@@ -85,9 +97,11 @@ class DBLPSource(ValidationSource):
                     if hits:
                         return hits[0]["info"]
 
+                logger.debug("DBLP no hits params=%s", params)
                 return None
 
             except requests.exceptions.RequestException:
+                logger.debug("DBLP request failed attempt=%d/%d params=%s", attempt + 1, max_retries, params, exc_info=True)
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay * (2 ** attempt))
                     continue
