@@ -2,3 +2,4 @@ bibtexparser==1.4.1
 requests==2.31.0
 latexcodec==3.0.0
 rapidfuzz==3.6.1
+questionary>=2.0.1

@@ -8,6 +8,7 @@ from .validator import SmartBibtexValidator
 from .reporting import generate_report, print_summary
 from .sources import build_sources
 from .sanitize import sanitize_entries
+from .dedupe import find_duplicates, apply_dedupe_drop_only
 
 
 def main():
@@ -81,12 +82,54 @@ def main():
         help="How to apply corrections to the output bib (default: preferred)",
     )
     parser.add_argument(
+        "--dedupe",
+        action="store_true",
+        help="Detect and remove duplicate BibTeX entries (safe: drop-only, keeps first occurrence)",
+    )
+    parser.add_argument(
+        "--dedupe-title-threshold",
+        type=float,
+        default=0.95,
+        help="Title similarity threshold for non-DOI dedupe (default: 0.95)",
+    )
+    parser.add_argument(
+        "--dedupe-allow-title-only",
+        action="store_true",
+        help="Allow dedupe by title only when DOI/year/author missing (riskier; default: off)",
+    )
+    parser.add_argument(
+        "--dedupe-dry-run",
+        action="store_true",
+        help="Only report duplicates; do not modify output bib",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Interactively resolve ambiguous matches by asking you to choose among candidates",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging",
     )
 
     args = parser.parse_args()
+
+    # --interactive requires the optional UI dependency.
+    # Fail fast so we never silently fall back to a poor prompt.
+    if args.interactive:
+        try:
+            import questionary  # noqa: F401
+        except Exception:
+            print(
+                "❌ Error: --interactive requires the dependency 'questionary'.\n"
+                "Install it with:\n"
+                "  python -m pip install questionary\n"
+                "or:\n"
+                "  python -m pip install -r requirements.txt\n"
+                "Then rerun with --interactive."
+            )
+            sys.exit(2)
 
     # Initialize logging
     setup_logging(args.debug)
@@ -100,6 +143,27 @@ def main():
         print(f"❌ Error parsing BibTeX file: {e}")
         sys.exit(1)
 
+    # Run deduplication if requested
+    dedupe_decisions = []
+    dedupe_groups = {}
+
+    if args.dedupe:
+        dedupe_decisions, dedupe_groups = find_duplicates(
+            entries,
+            title_threshold=args.dedupe_title_threshold,
+            allow_title_only=args.dedupe_allow_title_only,
+        )
+        if dedupe_decisions:
+            total_dupes = sum(len(d.drop_ids) for d in dedupe_decisions)
+            print(f"🧩 Dedupe: found {total_dupes} duplicate entries in {len(dedupe_decisions)} groups")
+            if args.dedupe_dry_run:
+                print("🧩 Dedupe dry-run enabled: bibliography will not be modified")
+            else:
+                entries = apply_dedupe_drop_only(entries, dedupe_groups)
+                print(f"🧩 Dedupe applied: {len(entries)} entries remain after dropping duplicates\n")
+        else:
+            print("🧩 Dedupe: no duplicates detected\n")
+
     # Build sources
     sources = build_sources(args.sources)
     if not sources:
@@ -107,6 +171,15 @@ def main():
         sys.exit(1)
 
     print(f"📚 Validation sources: {', '.join(sources.keys())}\n")
+
+    # Interactive mode prioritizes UX; Semantic Scholar is frequently rate-limited (429).
+    # If user is interactive and didn't explicitly request semantic only, drop semantic to avoid slowdowns.
+    if args.interactive and "semantic" in sources and "semantic" in args.sources and len(args.sources) > 1:
+        del sources["semantic"]
+        print("ℹ️  Interactive mode: disabling Semantic Scholar source to avoid rate limiting.\n")
+
+    if args.interactive:
+        print("🧑‍⚖️ Interactive mode: you will be prompted to select matches when ambiguous.\n")
 
     # Run validation
     validator = SmartBibtexValidator(
@@ -117,16 +190,26 @@ def main():
         max_workers=args.max_workers,
         entry_timeout=args.entry_timeout,
         stop_on_first_match=args.stop_on_first_match,
+        interactive_disambiguation=args.interactive,
     )
     validator.validate_all()
 
     # Generate report
-    generate_report(entries, validator.results, args.sources, validator.lint_results, args.output_report)
+    generate_report(
+        entries,
+        validator.results,
+        args.sources,
+        validator.lint_results,
+        args.output_report,
+        dedupe_decisions=dedupe_decisions,
+    )
     print_summary(entries, validator.results, len(entries))
 
-    # Pipeline: optionally stop/skip based on lint results
+    # Pipeline: optionally stop/skip based on lint results or dedupe dry-run
     bib_written = False
-    if validator.lint_issue_count > 0 and args.no_write_on_lint:
+    if args.dedupe and args.dedupe_dry_run:
+        print("🧩 Dedupe dry-run: skipping BibTeX output.")
+    elif validator.lint_issue_count > 0 and args.no_write_on_lint:
         print(f"⚠ Lint issues found ({validator.lint_issue_count}). Skipping BibTeX output due to --no-write-on-lint.")
     else:
         updated_entries = validator.apply_corrections_to_entries(

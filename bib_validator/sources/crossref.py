@@ -3,7 +3,7 @@
 import logging
 import requests
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from .base import ValidationSource
 
 
@@ -71,12 +71,17 @@ class CrossrefSource(ValidationSource):
             return None
 
     def search_by_title(self, title: str) -> Optional[Dict]:
-        """Search Crossref by title"""
+        """Search Crossref by title (best single hit; backward compatible)"""
+        items = self.search_by_title_candidates(title, max_results=1)
+        return items[0] if items else None
+
+    def search_by_title_candidates(self, title: str, max_results: int = 5) -> List[Dict]:
+        """Search Crossref by title and return up to max_results candidates"""
         self._rate_limit()
         
         params = {
             "query.title": title,
-            "rows": 1,
+            "rows": max_results,
             "sort": "relevance",
         }
         
@@ -87,18 +92,17 @@ class CrossrefSource(ValidationSource):
             
             if data.get("status") == "ok" and data.get("message"):
                 items = data["message"].get("items", [])
-                if items:
-                    return items[0]
-            return None
+                return items[:max_results] if items else []
+            return []
         except requests.exceptions.Timeout:
             logger.debug("Crossref title query timeout title=%r", title)
-            return None
+            return []
         except requests.exceptions.HTTPError as e:
             logger.debug("Crossref title query failed title=%r status=%d", title, e.response.status_code)
-            return None
+            return []
         except Exception as e:
             logger.debug("Crossref title search failed title=%r", title, exc_info=True)
-            return None
+            return []
 
     def extract_bibtex_fields(self, result: Dict) -> Dict:
         """Extract BibTeX fields from Crossref API result"""

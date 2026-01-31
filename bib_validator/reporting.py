@@ -9,6 +9,7 @@ def generate_report(
     sources: List[str],
     lint_results: Dict = None,
     output_file: str = "validation_report.txt",
+    dedupe_decisions=None,
 ) -> None:
     """Generate detailed validation report"""
     print(f"\n📊 Generating report: {output_file}")
@@ -43,6 +44,21 @@ def generate_report(
         f.write(f"🧹 Lint issues:   {lint_issues_count} (across {lint_entries_count} entries)\n")
         f.write(f"🔍 Needs review:  {len(needs_review)}\n\n")
 
+        # DEDUPLICATION section
+        if dedupe_decisions:
+            f.write("=" * 80 + "\n")
+            f.write("DEDUPLICATION (Duplicate Entries Detected)\n")
+            f.write("=" * 80 + "\n\n")
+            total_dupes = sum(len(d.drop_ids) for d in dedupe_decisions)
+            f.write(f"Duplicate entries that can be dropped (keep-first policy): {total_dupes}\n")
+            f.write(f"Duplicate groups: {len(dedupe_decisions)}\n\n")
+
+            for d in dedupe_decisions:
+                f.write(f"KEEP: {d.keep_id} | reason={d.reason} | confidence={d.confidence:.2f}\n")
+                for drop in d.drop_ids:
+                    f.write(f"  DROP: {drop}\n")
+                f.write("\n")
+
         # NEEDS HUMAN REVIEW section
         if needs_review:
             f.write("=" * 80 + "\n")
@@ -63,6 +79,24 @@ def generate_report(
                     f.write("Review reasons:\n")
                     for reason in r["review_reasons"]:
                         f.write(f"  - {reason}\n")
+                if r.get("rejected_candidates"):
+                    f.write("Rejected candidate matches:\n")
+                    for c in r["rejected_candidates"]:
+                        src = c.get("source", "unknown")
+                        method = c.get("search_method", "unknown")
+                        reasons = "; ".join(c.get("reasons") or [])
+                        f.write(f"  - {src} via {method}: {reasons}\n")
+                if r.get("candidate_matches"):
+                    f.write("Top candidate matches (ambiguous):\n")
+                    for c in r["candidate_matches"]:
+                        src = c.get("source", "unknown")
+                        method = c.get("search_method", "unknown")
+                        score = c.get("score", 0.0)
+                        cf = c.get("corrected_fields") or {}
+                        title = (cf.get("title") or "")[:80]
+                        year = cf.get("year") or ""
+                        doi = cf.get("doi") or ""
+                        f.write(f"  - {score:.2f} {src} via {method} | {year} | {doi} | {title}\n")
                 if r.get("autofilled_fields"):
                     f.write(f"Auto-filled fields: {', '.join(r['autofilled_fields'])}\n")
                 f.write("\n")

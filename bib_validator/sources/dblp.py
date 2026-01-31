@@ -3,7 +3,7 @@
 import logging
 import requests
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from .base import ValidationSource
 from ..lint import is_web_resource
 
@@ -68,6 +68,16 @@ class DBLPSource(ValidationSource):
         params = {"q": title, "format": "json", "h": 1}
         return self._search(params)
 
+    def search_by_doi_candidates(self, doi: str, max_results: int = 5) -> List[Dict]:
+        """Search DBLP by DOI and return up to max_results candidates"""
+        params = {"q": f"doi:{doi}", "format": "json", "h": max_results}
+        return self._search_many(params, max_results=max_results)
+
+    def search_by_title_candidates(self, title: str, max_results: int = 5) -> List[Dict]:
+        """Search DBLP by title and return up to max_results candidates"""
+        params = {"q": title, "format": "json", "h": max_results}
+        return self._search_many(params, max_results=max_results)
+
     def _search(self, params: Dict, max_retries: int = 2) -> Optional[Dict]:
         """Search DBLP with exponential backoff retry"""
         url = "https://dblp.org/search/publ/api"
@@ -108,6 +118,51 @@ class DBLPSource(ValidationSource):
                 return None
 
         return None
+
+    def _search_many(self, params: Dict, max_results: int = 5, max_retries: int = 2) -> List[Dict]:
+        """Search DBLP and return a list of hit infos (up to max_results)."""
+        url = "https://dblp.org/search/publ/api"
+        retry_delay = 2
+
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(url, params=params, timeout=10)
+
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.debug("DBLP rate limited (429). Waiting %.1fs params=%s", wait_time, params)
+                        time.sleep(wait_time)
+                        continue
+                    return []
+
+                response.raise_for_status()
+                data = response.json()
+
+                hits = (
+                    data.get("result", {})
+                    .get("hits", {})
+                    .get("hit", [])
+                )
+                if not hits:
+                    logger.debug("DBLP no hits params=%s", params)
+                    return []
+
+                out: List[Dict] = []
+                for h in hits[:max_results]:
+                    info = (h or {}).get("info")
+                    if info:
+                        out.append(info)
+                return out
+
+            except requests.exceptions.RequestException:
+                logger.debug("DBLP request failed attempt=%d/%d params=%s", attempt + 1, max_retries, params, exc_info=True)
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (2 ** attempt))
+                    continue
+                return []
+
+        return []
 
     def extract_bibtex_fields(self, result: Dict) -> Dict:
         """Extract BibTeX fields from DBLP result"""

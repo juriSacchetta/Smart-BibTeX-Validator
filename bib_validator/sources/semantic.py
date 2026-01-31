@@ -3,7 +3,7 @@
 import logging
 import time
 import requests
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from .base import ValidationSource
 
 
@@ -23,10 +23,14 @@ class SemanticScholarSource(ValidationSource):
     def __init__(self):
         """Initialize with cooldown tracking and session for connection reuse"""
         self.cooldown_until = 0.0
+        self.disabled_until = 0.0
         self.session = requests.Session()
 
     def should_attempt(self, entry: Dict) -> Tuple[bool, str]:
         """Semantic Scholar-specific skip policy"""
+        if time.time() < self.disabled_until:
+            return False, f"disabled after rate limit until {self.disabled_until:.0f}"
+        
         if time.time() < self.cooldown_until:
             return False, f"rate limited until {self.cooldown_until:.0f}"
         
@@ -53,8 +57,12 @@ class SemanticScholarSource(ValidationSource):
             return None
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
+                # Avoid derailing long runs: disable Semantic Scholar for a long window after 429.
+                self.disabled_until = time.time() + 3600
                 self.cooldown_until = time.time() + 60
-                logger.warning("Semantic Scholar rate-limited (429). Cooling down for 60s.")
+                logger.warning(
+                    "Semantic Scholar rate-limited (429). Disabling source for 1h (cooldown 60s)."
+                )
                 return None
             elif e.response.status_code == 404:
                 logger.debug("Semantic Scholar DOI not found doi=%s", doi)
@@ -66,11 +74,16 @@ class SemanticScholarSource(ValidationSource):
             return None
 
     def search_by_title(self, title: str) -> Optional[Dict]:
-        """Search Semantic Scholar by title via REST API"""
+        """Search Semantic Scholar by title (best single hit; backward compatible)"""
+        items = self.search_by_title_candidates(title, max_results=1)
+        return items[0] if items else None
+
+    def search_by_title_candidates(self, title: str, max_results: int = 5) -> List[Dict]:
+        """Search Semantic Scholar by title and return up to max_results candidates"""
         url = f"{S2_API_URL}/paper/search"
         params = {
             "query": title,
-            "limit": 1,
+            "limit": max_results,
             "fields": S2_FIELDS,
         }
         
@@ -79,26 +92,27 @@ class SemanticScholarSource(ValidationSource):
             response.raise_for_status()
             data = response.json()
             
-            # Check if we got results
-            if data.get("data") and len(data["data"]) > 0:
-                return data["data"][0]
-            return None
+            items = data.get("data") or []
+            return items[:max_results] if items else []
         except requests.exceptions.Timeout:
             logger.debug("Semantic Scholar title query timeout title=%r", title)
-            return None
+            return []
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
+                self.disabled_until = time.time() + 3600
                 self.cooldown_until = time.time() + 60
-                logger.warning("Semantic Scholar rate-limited (429). Cooling down for 60s.")
-                return None
+                logger.warning(
+                    "Semantic Scholar rate-limited (429). Disabling source for 1h (cooldown 60s)."
+                )
+                return []
             elif e.response.status_code == 400:
                 logger.debug("Semantic Scholar rejected query (400) title=%r", title)
             else:
                 logger.debug("Semantic Scholar title query failed title=%r status=%d", title, e.response.status_code, exc_info=True)
-            return None
+            return []
         except Exception as e:
             logger.debug("Semantic Scholar title search failed title=%r", title, exc_info=True)
-            return None
+            return []
 
     def extract_bibtex_fields(self, result: Dict) -> Dict:
         """Extract BibTeX fields from Semantic Scholar REST API result"""
