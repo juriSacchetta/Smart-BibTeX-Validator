@@ -249,7 +249,7 @@ class SmartBibtexValidator:
         #  - corrected_fields: fields extracted from the chosen preferred match (if any)
         #  - issues: combined lint + remote comparison issues (strings, often prefixed with SOURCE:)
         #  - needs_review/review_reasons: human attention flags; not necessarily fatal
-        #  - match_accepted: True only if a remote candidate passed the safety gate
+        #  - match_accepted: True only if a remote candidate passed the safety gate during validation.
         #  - rejected_candidates: candidate matches that were found but rejected as unsafe
         #  - candidate_matches: ranked shortlist when ambiguous (no auto-accept)
         result = {
@@ -830,6 +830,49 @@ class SmartBibtexValidator:
             resolved.add("BLOCKING:MISSING_FIELD:booktitle")
 
         return resolved
+
+    def get_ranked_candidates(self, entry: Dict, limit: int = 15) -> List[Dict]:
+        """
+        Public API for UIs: return ranked candidates across all enabled sources.
+        Does not mutate self.results.
+        """
+        tasks = []
+        for source_name in DEFAULT_ORDER:
+            if source_name not in self.sources:
+                continue
+            source = self.sources[source_name]
+            can_try, _why = source.should_attempt(entry)
+            if can_try:
+                tasks.append((source_name, source))
+
+        candidates: List[Dict] = []
+        for source_name, source in tasks:
+            cand_tuples = self._query_source(source_name, source, entry) or []
+            for found, corrected_fields, search_method in cand_tuples:
+                accepted, reject_reasons, _title_sim = self._accept_match(
+                    entry, corrected_fields, search_method
+                )
+                scored = self._score_candidate(entry, corrected_fields)
+                hard = scored.get("hard_reject_reasons") or []
+                candidates.append(
+                    {
+                        "source": source_name,
+                        "search_method": search_method,
+                        "source_data": found,
+                        "corrected_fields": corrected_fields,
+                        "score": float(scored["score"]),
+                        "components": scored["components"],
+                        "accepted_by_gate": bool(accepted and not hard),
+                        "gate_reasons": list(reject_reasons) + list(hard),
+                    }
+                )
+
+        def _key(c: Dict):
+            is_doi = bool((c.get("search_method") or "").endswith(":DOI"))
+            return (1 if is_doi else 0, float(c.get("score") or 0.0))
+
+        candidates.sort(key=_key, reverse=True)
+        return candidates[:limit]
 
     def _query_source(
         self, source_name: str, source: ValidationSource, entry: Dict

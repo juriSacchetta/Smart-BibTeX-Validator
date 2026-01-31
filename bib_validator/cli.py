@@ -108,12 +108,22 @@ def main():
         help="Interactively resolve ambiguous matches by asking you to choose among candidates",
     )
     parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="Launch the full-screen TUI editor to review entries and apply remote matches",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging",
     )
 
     args = parser.parse_args()
+
+    # Enforce mutually exclusive options
+    if args.tui and args.interactive:
+        print("❌ Error: --tui and --interactive are mutually exclusive.")
+        sys.exit(2)
 
     # --interactive requires the optional UI dependency.
     # Fail fast so we never silently fall back to a poor prompt.
@@ -128,6 +138,20 @@ def main():
                 "or:\n"
                 "  python -m pip install -r requirements.txt\n"
                 "Then rerun with --interactive."
+            )
+            sys.exit(2)
+
+    # --tui requires textual
+    if args.tui:
+        try:
+            import textual  # noqa: F401
+        except Exception:
+            print(
+                "❌ Error: --tui requires the dependency 'textual'.\n"
+                "Install it with:\n"
+                "  python -m pip install textual\n"
+                "or:\n"
+                "  python -m pip install -r requirements.txt\n"
             )
             sys.exit(2)
 
@@ -181,7 +205,7 @@ def main():
     if args.interactive:
         print("🧑‍⚖️ Interactive mode: you will be prompted to select matches when ambiguous.\n")
 
-    # Run validation
+    # Create validator (don't run validation yet if --tui)
     validator = SmartBibtexValidator(
         entries,
         sources,
@@ -192,7 +216,32 @@ def main():
         stop_on_first_match=args.stop_on_first_match,
         interactive_disambiguation=args.interactive,
     )
-    validator.validate_all()
+
+    # TUI mode: launch editor immediately and return
+    if args.tui:
+        from .tui.app import run_tui_editor
+
+        print("🧑‍⚖️ Launching TUI editor...\n")
+
+        edited_entries = run_tui_editor(
+            entries=entries,
+            validator=validator,
+            output_path=args.output_bib,
+        )
+
+        sanitized_entries = sanitize_entries(edited_entries)
+        write_bibtex_entries(args.output_bib, sanitized_entries)
+        print(f"✓ Updated BibTeX saved to {args.output_bib}")
+        return
+
+    # Standard validation flow
+    print("🔍 Starting validation against multiple sources...")
+
+    try:
+        validator.validate_all()
+    except KeyboardInterrupt:
+        print("\n⚠ Interrupted by user (Ctrl+C). Exiting.")
+        sys.exit(130)
 
     # Generate report
     generate_report(
