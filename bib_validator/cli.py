@@ -31,6 +31,11 @@ def main():
         default="validation_report.txt",
         help="Output file for validation report (default: validation_report.txt)",
     )
+    parser.add_argument(
+        "--skip-url-check",
+        action="store_true",
+        help="Skip URL reachability checks",
+    )
 
     args = parser.parse_args()
 
@@ -51,7 +56,7 @@ def main():
 
     # Run validation
     validator = SmartBibtexValidator(entries, sources)
-    validator.validate_all()
+    validator.validate_all(check_urls=not args.skip_url_check)
 
     # Generate outputs
     updated_entries = validator.apply_corrections_to_entries()

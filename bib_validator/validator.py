@@ -1,10 +1,12 @@
 """Core validation logic"""
 
 import time
+import requests
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Any
 from copy import deepcopy
 from .sources import ValidationSource, build_sources, DEFAULT_ORDER
+from .url_check import check_url, is_doi_url
 
 
 def authors_to_list(authors_val: Any) -> List[str]:
@@ -35,10 +37,16 @@ class SmartBibtexValidator:
             "validated": [],
             "mismatches": [],
             "not_found": [],
+            "url_checks": [],
         }
+        self.session = requests.Session()  # Reuse connection for URL checks
 
-    def validate_all(self):
-        """Validate all entries against sources"""
+    def validate_all(self, check_urls: bool = True):
+        """Validate all entries against sources
+        
+        Args:
+            check_urls: Whether to check URL reachability (default: True)
+        """
         if not self.entries:
             print("⚠ No entries to validate")
             return
@@ -70,6 +78,11 @@ class SmartBibtexValidator:
 
             # Delay between entries
             time.sleep(2)
+        
+        # Check URLs if requested
+        if check_urls:
+            print("\n🔗 Checking URL reachability...")
+            self.check_all_urls()
 
     def validate_entry(self, entry: Dict) -> Dict:
         """Validate single entry against all sources in order"""
@@ -260,3 +273,47 @@ class SmartBibtexValidator:
             updated_entries.append(entry_copy)
 
         return updated_entries
+
+    def check_all_urls(self):
+        """Check reachability of all URLs in entries"""
+        url_results = []
+        
+        for entry in self.entries:
+            entry_id = entry.get("ID", "unknown")
+            url = entry.get("url", "")
+            
+            if not url:
+                continue
+            
+            # Skip DOI resolver URLs
+            if is_doi_url(url):
+                continue
+            
+            print(f"  Checking URL for {entry_id}...", end=" ")
+            ok, detail = check_url(url, self.session, timeout=6.0)
+            
+            url_result = {
+                "id": entry_id,
+                "url": url,
+                "reachable": ok,
+                "detail": detail,
+            }
+            
+            url_results.append(url_result)
+            
+            if ok:
+                print(f"✓ {detail}")
+            else:
+                print(f"✗ {detail}")
+            
+            # Small delay between URL checks
+            time.sleep(0.5)
+        
+        self.results["url_checks"] = url_results
+        
+        # Print summary
+        if url_results:
+            unreachable = [r for r in url_results if not r["reachable"]]
+            print(f"\n✓ URL checks complete: {len(url_results) - len(unreachable)}/{len(url_results)} reachable")
+            if unreachable:
+                print(f"⚠ {len(unreachable)} URLs unreachable")

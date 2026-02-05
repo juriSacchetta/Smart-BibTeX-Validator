@@ -63,6 +63,25 @@ def generate_report(
             f.write("=" * 80 + "\n\n")
             for result in results["validated"]:
                 f.write(f"✓ {result['id']}\n")
+        
+        # URL checks
+        if results.get("url_checks"):
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("URL REACHABILITY CHECKS\n")
+            f.write("=" * 80 + "\n\n")
+            
+            unreachable = [r for r in results["url_checks"] if not r["reachable"]]
+            reachable = [r for r in results["url_checks"] if r["reachable"]]
+            
+            f.write(f"Total URLs checked: {len(results['url_checks'])}\n")
+            f.write(f"✓ Reachable: {len(reachable)}\n")
+            f.write(f"✗ Unreachable: {len(unreachable)}\n\n")
+            
+            if unreachable:
+                f.write("Unreachable URLs:\n")
+                for result in unreachable:
+                    f.write(f"  {result['id']}: {result['url']}\n")
+                    f.write(f"    Error: {result['detail']}\n")
 
     print(f"✓ Report saved to {output_file}")
 
